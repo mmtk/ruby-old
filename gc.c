@@ -39,6 +39,7 @@
 #include "debug_counter.h"
 #include "transient_heap.h"
 #include "mjit.h"
+#include "mmtk.h"
 
 #undef rb_data_object_wrap
 
@@ -674,6 +675,8 @@ enum gc_mode {
 };
 
 typedef struct rb_objspace {
+    // TODO: clean up this structure and remove everything that we don't need anymore
+    // (or at least hide it behind a compiler flag)
     struct {
 	size_t limit;
 	size_t increase;
@@ -824,6 +827,10 @@ typedef struct rb_objspace {
 
 #if GC_DEBUG_STRESS_TO_CLASS
     VALUE stress_to_class;
+#endif
+
+#ifdef USE_THIRD_PARTY_HEAP
+    void* mutator;
 #endif
 } rb_objspace_t;
 
@@ -1586,6 +1593,7 @@ calloc1(size_t n)
 rb_objspace_t *
 rb_objspace_alloc(void)
 {
+    // TODO: comment out this?
     rb_objspace_t *objspace = calloc1(sizeof(rb_objspace_t));
     malloc_limit = gc_params.malloc_limit_min;
     list_head_init(&objspace->eden_heap.pages);
@@ -2243,6 +2251,10 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
 {
     rb_objspace_t *objspace = &rb_objspace;
     VALUE obj;
+#ifdef USE_THIRD_PARTY_HEAP
+    VALUE obj = alloc(objspace->mutator, sizeof(VALUE), 8, 0, 0); // Default allocation semantics
+    return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+#else
 
     RB_DEBUG_COUNTER_INC(obj_newobj);
     (void)RB_DEBUG_COUNTER_INC_IF(obj_newobj_wb_unprotected, !wb_protected);
@@ -2268,6 +2280,7 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
 	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace) :
 	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace);
     }
+#endif
 }
 
 VALUE
@@ -2911,6 +2924,12 @@ void
 Init_heap(void)
 {
     rb_objspace_t *objspace = &rb_objspace;
+
+#ifdef USE_THIRD_PARTY_HEAP
+    gc_init(gc_params.heap_init_slots * sizeof(RVALUE));
+    objspace->mutator = bind_mutator(0); // TODO replace with pointer to start of TLS
+    return;
+#endif
 
     objspace->next_object_id = INT2FIX(OBJ_ID_INITIAL);
     objspace->id_to_obj_tbl = st_init_table(&object_id_hash_type);
@@ -9221,6 +9240,9 @@ rb_objspace_gc_enable(rb_objspace_t *objspace)
     int old = dont_gc;
 
     dont_gc = FALSE;
+#ifdef USE_THIRD_PARTY_HEAP
+    start_control_collector(0); // TODO use pointer to TLS
+#endif
     return old ? Qtrue : Qfalse;
 }
 
