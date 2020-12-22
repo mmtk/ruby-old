@@ -1602,6 +1602,11 @@ rb_objspace_alloc(void)
     list_head_init(&objspace->tomb_heap.pages);
     dont_gc = TRUE;
 
+#ifdef USE_THIRD_PARTY_HEAP
+    gc_init(gc_params.heap_init_slots * sizeof(RVALUE));
+    objspace->mutator = bind_mutator(10); // TODO replace with pointer to start of TLS
+#endif
+
     return objspace;
 }
 
@@ -2929,8 +2934,6 @@ Init_heap(void)
     rb_objspace_t *objspace = &rb_objspace;
 
 #ifdef USE_THIRD_PARTY_HEAP
-    gc_init(gc_params.heap_init_slots * sizeof(RVALUE));
-    objspace->mutator = bind_mutator(0); // TODO replace with pointer to start of TLS
     return;
 #endif
 
@@ -9253,7 +9256,7 @@ rb_objspace_gc_enable(rb_objspace_t *objspace)
     dont_gc = FALSE;
 #ifdef USE_THIRD_PARTY_HEAP
     dont_gc = TRUE;
-    start_control_collector(0); // TODO use pointer to TLS
+    // start_control_collector(0); // TODO use pointer to TLS
     return false;
 #endif
     return old ? Qtrue : Qfalse;
@@ -9712,6 +9715,9 @@ rb_aligned_free(void *ptr)
 static inline size_t
 objspace_malloc_size(rb_objspace_t *objspace, void *ptr, size_t hint)
 {
+#ifdef USE_THIRD_PARTY_HEAP
+    return hint;
+#endif
 #ifdef HAVE_MALLOC_USABLE_SIZE
     return malloc_usable_size(ptr);
 #else
@@ -9899,6 +9905,9 @@ objspace_xmalloc0(rb_objspace_t *objspace, size_t size)
     TRY_WITH_GC(mem = malloc(size));
 #endif
     RB_DEBUG_COUNTER_INC(heap_xmalloc);
+#ifdef USE_THIRD_PARTY_HEAP
+    return mem;
+#endif
     return objspace_malloc_fixup(objspace, mem, size);
 }
 
